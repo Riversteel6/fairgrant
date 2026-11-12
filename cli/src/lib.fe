@@ -1,0 +1,140 @@
+//! Native CLI. Only Args::new touches raw pointers; allocation stays effect-free.
+use std::native::{Args, Arg}
+use fairgrant::allocate
+
+extern {
+    fn putchar(_ ch: i32) -> i32
+}
+
+fn text<const N: usize>(_ value: String<N>) {
+    let bytes = value.as_bytes()
+    var i: usize = 0
+    while i < N {
+        if bytes[i] != 0 {
+            let _ = putchar(bytes[i] as i32)
+        }
+        i += 1
+    }
+}
+
+fn number(_ value: u128) {
+    var digits: [u8; 39] = [0; 39]
+    var n = value
+    var count: usize = 0
+    while n > 0 {
+        digits[count] = (n % 10).downcast().unwrap()
+        count += 1
+        n /= 10
+    }
+    if count == 0 {
+        let _ = putchar(48)
+    }
+    while count > 0 {
+        count -= 1
+        let _ = putchar((digits[count] + 48) as i32)
+    }
+}
+
+fn parse(_ arg: Arg, limit: u128) -> Option<u128> {
+    if arg.len() == 0 {
+        return Option::None
+    }
+    var value: u128 = 0
+    var i: usize = 0
+    while i < arg.len() {
+        let b = arg.byte_at(i)
+        if b < 48 || b > 57 {
+            return Option::None
+        }
+        let d = (b - 48) as u128
+        if value > (limit - d) / 10 {
+            return Option::None
+        }
+        value = value * 10 + d
+        i += 1
+    }
+    Option::Some(value)
+}
+
+pub fn main(argc: i32, argv: **u8) -> i32 {
+    // Native entry guarantees argc/argv lifetime and NUL-terminated arguments.
+    let args = unsafe {
+        Args::new(argc, argv)
+    }
+    if args.len() < 4 || args.len() > 34 || args.len() % 2 != 0 {
+        text("Usage: fairgrant BUDGET")
+        text(" WEIGHT CAP [WEIGHT CAP ...]\n")
+        return 2
+    }
+    let max_amount: u128 = 340282366920938463463374607431768211455
+    let budget = match parse(args.get(1), limit: max_amount) {
+        Option::Some(n) => n,
+        Option::None => {
+            text("Invalid budget\n")
+            return 2
+        },
+    }
+    let count = (args.len() - 2) / 2
+    var weights: [u64; 16] = [0; 16]
+    var caps: [u128; 16] = [0; 16]
+    var i: usize = 0
+    while i < count {
+        weights[i] = match parse(args.get(2 + i * 2), limit: 18446744073709551615) {
+            Option::Some(n) => n.downcast().unwrap(),
+            Option::None => {
+                text("Invalid weight\n")
+                return 2
+            },
+        }
+        caps[i] = match parse(args.get(3 + i * 2), limit: max_amount) {
+            Option::Some(n) => n,
+            Option::None => {
+                text("Invalid cap\n")
+                return 2
+            },
+        }
+        i += 1
+    }
+    let plan = match allocate(budget, weights, caps, count) {
+        Result::Ok(p) => p,
+        Result::Err(_) => {
+            text("Invalid allocation input\n")
+            return 2
+        },
+    }
+    text("{\"awards\":[")
+    i = 0
+    while i < count {
+        if i > 0 { text(",") }
+        text("\"")
+        number(plan.awards[i])
+        text("\"")
+        i += 1
+    }
+    text("],\"unallocated\":\"")
+    number(plan.unallocated)
+    text("\",\"capped\":[")
+    i = 0
+    while i < count {
+        if i > 0 { text(",") }
+        if plan.capped[i] {
+            text("true")
+        } else {
+            text("false")
+        }
+        i += 1
+    }
+    text("],\"rounded_up\":[")
+    i = 0
+    while i < count {
+        if i > 0 { text(",") }
+        if plan.rounded_up[i] {
+            text("true")
+        } else {
+            text("false")
+        }
+        i += 1
+    }
+    text("]}\n")
+    0
+}

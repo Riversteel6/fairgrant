@@ -1,0 +1,107 @@
+//! FairGrant: exact, capped, weighted integer allocation. No transfers or storage.
+
+pub struct Plan {
+    pub awards: [u128; 16],
+    pub capped: [bool; 16],
+    pub rounded_up: [bool; 16],
+    pub unallocated: u128,
+}
+
+pub enum AllocationError {
+    InvalidCount,
+    NonzeroPadding,
+}
+
+/// Allocate a budget among at most sixteen recipients. A zero weight is ineligible.
+/// Caps bind before Hamilton rounding. Equal remainders prefer the lower index.
+/// Caller must commit the canonical recipient order before choosing a budget.
+pub fn allocate(budget: u128, weights: [u64; 16], caps: [u128; 16], count: usize) -> Result<
+    AllocationError,
+    Plan,
+> {
+    if count == 0 || count > 16 {
+        return Result::Err(AllocationError::InvalidCount)
+    }
+    var i: usize = count
+    while i < 16 {
+        if weights[i] != 0 || caps[i] != 0 {
+            return Result::Err(AllocationError::NonzeroPadding)
+        }
+        i += 1
+    }
+    var awards: [u128; 16] = [0; 16]
+    var capped: [bool; 16] = [false; 16]
+    var rounded_up: [bool; 16] = [false; 16]
+    var active: [bool; 16] = [false; 16]
+    var total_weight: u256 = 0
+    var capacity: u256 = 0
+    i = 0
+    while i < count {
+        if weights[i] > 0 && caps[i] > 0 {
+            active[i] = true
+            total_weight += weights[i] as u256
+            capacity += caps[i] as u256
+        }
+        i += 1
+    }
+    let target: u256 = if (budget as u256) < capacity {
+        budget as u256
+    } else {
+        capacity
+    }
+    var remaining: u256 = target
+    // At least one recipient leaves on each changing pass, so at most count passes.
+    var changed = true
+    while changed && total_weight > 0 {
+        changed = false
+        i = 0
+        while i < count {
+            if active[i] && remaining * (weights[i] as u256) >= (caps[i] as u256) * total_weight {
+                awards[i] = caps[i]
+                capped[i] = true
+                active[i] = false
+                remaining -= caps[i] as u256
+                total_weight -= weights[i] as u256
+                changed = true
+            }
+            i += 1
+        }
+    }
+    if total_weight > 0 {
+        var remainders: [u256; 16] = [0; 16]
+        var floor_sum: u256 = 0
+        i = 0
+        while i < count {
+            if active[i] {
+                let numerator = remaining * (weights[i] as u256)
+                let floor = numerator / total_weight
+                awards[i] = floor.downcast().unwrap()
+                remainders[i] = numerator % total_weight
+                floor_sum += floor
+            }
+            i += 1
+        }
+        var dust = remaining - floor_sum
+        while dust > 0 {
+            var best: usize = 16
+            i = 0
+            while i < count {
+                if active[i] && !rounded_up[i] {
+                    if best == 16 {
+                        best = i
+                    } else if remainders[i] > remainders[best] {
+                        best = i
+                    }
+                }
+                i += 1
+            }
+            assert!(best < count)
+            awards[best] += 1
+            rounded_up[best] = true
+            dust -= 1
+        }
+    }
+    Result::Ok(
+        Plan { awards, capped, rounded_up, unallocated: budget - target.downcast().unwrap() },
+    )
+}

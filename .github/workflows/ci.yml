@@ -1,0 +1,22 @@
+name: Verify FairGrant
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned official Fe
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/argotorg/fe/v26.5.0/feup/feup.sh -o /tmp/feup.sh
+          bash /tmp/feup.sh --version v26.5.0 --no-modify-path
+          echo "$HOME/.fe/bin" >> "$GITHUB_PATH"
+      - run: fe --version
+      - run: fe fmt --check
+      - run: fe fmt cli --check
+      - run: fe test
+      - run: fe test --backend native
+      - run: fe build cli --backend native --emit executable
+      - run: python3 scripts/verify.py
+      - run: python3 scripts/test_report.py

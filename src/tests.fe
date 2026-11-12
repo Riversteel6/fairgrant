@@ -1,0 +1,74 @@
+use ingot::allocate
+
+#[test]
+fn simple_rounding() {
+    let plan = match allocate(
+        budget: 10,
+        weights: [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        caps: [10, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        count: 3,
+    ) {
+        Result::Ok(p) => p,
+        Result::Err(_) => {
+            assert!(false)
+            return
+        },
+    }
+    assert!(plan.awards[0] == 4)
+    assert!(plan.awards[1] == 3)
+    assert!(plan.awards[2] == 3)
+    assert!(plan.unallocated == 0)
+}
+
+#[test]
+fn invalid_count_is_typed_error() {
+    let weights: [u64; 16] = [0; 16]
+    let caps: [u128; 16] = [0; 16]
+    assert!(allocate(budget: 1, weights, caps, count: 0).is_err())
+    assert!(allocate(budget: 1, weights, caps, count: 17).is_err())
+}
+
+#[test]
+fn nonzero_padding_is_not_silently_ignored() {
+    var weights: [u64; 16] = [0; 16]
+    var caps: [u128; 16] = [0; 16]
+    weights[15] = 1
+    assert!(allocate(budget: 1, weights, caps, count: 1).is_err())
+    weights[15] = 0
+    caps[15] = 1
+    assert!(allocate(budget: 1, weights, caps, count: 1).is_err())
+}
+
+#[test]
+fn equal_remainder_uses_committed_order() {
+    let weights: [u64; 16] = [1; 16]
+    let caps: [u128; 16] = [100; 16]
+    let p = match allocate(budget: 7, weights, caps, count: 16) {
+        Result::Ok(p) => p,
+        Result::Err(_) => core::panic(),
+    }
+    var i: usize = 0
+    while i < 16 {
+        assert!(p.awards[i] == if i < 7 { 1 } else { 0 })
+        assert!(p.rounded_up[i] == (i < 7))
+        i += 1
+    }
+}
+
+#[test]
+fn scaling_weights_does_not_change_awards() {
+    let caps: [u128; 16] = [10; 16]
+    let a = match allocate(budget: 111, weights: [7; 16], caps, count: 16) {
+        Result::Ok(p) => p,
+        Result::Err(_) => core::panic(),
+    }
+    let b = match allocate(budget: 111, weights: [49; 16], caps, count: 16) {
+        Result::Ok(p) => p,
+        Result::Err(_) => core::panic(),
+    }
+    var i: usize = 0
+    while i < 16 {
+        assert!(a.awards[i] == b.awards[i])
+        i += 1
+    }
+}
